@@ -9,7 +9,7 @@ import yaml
 from pathlib import Path
 from datetime import datetime
 from argparse import ArgumentParser
-from typing import Optional, Tuple, Union
+from typing import Optional, Tuple, Union, Dict, List
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -29,8 +29,11 @@ class IOSyntheticWorkflow(object):
     # --- Init ----------------------------------------------------------------
     def __init__(self,
                  shape: Optional[Tuple[str, Union[int, str]]] = ("chain", 1),
-                 exec_site_name: Optional[str] = "condorpool"
-                 ) -> None:
+                 exec_site_name: Optional[str] = "condorpool",
+                 files_size: Optional[Union[List[float], Dict[str,float]]]=[1.0],
+                 size_unit: Optional[str] = 'B',
+                 waiting_time: Optional[Union[List[float], Dict[str,float]]] = [5.0],
+                ) -> None:
         self.wf_name = "io-synthetic"
         self.wid = self.wf_name + "-" + datetime.now().strftime("%s")
         self.dagfile = self.wid+".yml"
@@ -38,13 +41,45 @@ class IOSyntheticWorkflow(object):
         self.wf_dir = str(Path(__file__).parent.resolve())
         self.exec_site_name = exec_site_name
 
-        self.shape = shape            
+        self.shape = shape
+        self.size_unit = size_unit.upper()
+        self.files_size = files_size
+        self.waiting_time = waiting_time
 
+        ## Security checks
+        if self.size_unit not in ['B', 'K', 'M', 'G']:
+            print("Error: Unit size accepted values are [B, K, M, G] (default: B).")
+            sys.exit(-1)
+        
+        if isinstance(files_size, list) and len(files_size) == 1:
+            if isinstance(self.shape[1], int):
+                self.files_size = files_size*self.shape[1]
+            elif isinstance(self.shape[1], str) and self.shape[0] != "custom":
+                print("Error: Number of nodes must be an integer.")
+                sys.exit(-1)
+
+        if len(self.files_size) != self.shape[1]:
+            print("Error: File size list lenght ({}) must be equal to the number of nodes ({}).".format(
+                len(self.files_size), self.shape[1]))
+            sys.exit(-1)
+
+        if isinstance(waiting_time, list) and len(waiting_time) == 1:
+            if isinstance(self.shape[1], int):
+                self.waiting_time = waiting_time*self.shape[1]
+            else:
+                print("Error: Number of nodes must be an integer.")
+                sys.exit(-1)
+        
+        if len(self.waiting_time) != self.shape[1]:
+            print("Error: Waiting time list lenght ({}) must be equal to the number of nodes ({}).".format(
+                len(self.waiting_time), self.shape[1]))
+            sys.exit(-1)
+
+        ## Output Sites
         self.shared_scratch_dir = os.path.join(
             self.wf_dir, "{}/scratch".format(self.wid))
         self.local_storage_dir = os.path.join(
             self.wf_dir, "{}/output".format(self.wid))
-
 
     # --- Write files in directory --------------------------------------------
     def write(self):
@@ -63,7 +98,7 @@ class IOSyntheticWorkflow(object):
         return
 
     # --- Site Catalog --------------------------------------------------------
-    def create_sites_catalog(self):
+    def create_sites_catalog(self) -> None:
         self.sc = SiteCatalog()
 
         local = Site("local").add_directories(
@@ -111,7 +146,7 @@ class IOSyntheticWorkflow(object):
 
 
     # --- Transformation Catalog (Executables and Containers) -----------------
-    def create_transformation_catalog(self):
+    def create_transformation_catalog(self) -> None:
         self.tc = TransformationCatalog()
 
         # --- Transformations ---------------------------------------------------------------
@@ -186,7 +221,7 @@ class IOSyntheticWorkflow(object):
 
     # --- Create Workflow -----------------------------------------------------
 
-    def create_workflow(self):
+    def create_workflow(self) -> None:
         if self.shape[0] == "chain":
             self.create_workflow_chain()
         elif self.shape[0] == "fork":
@@ -194,14 +229,15 @@ class IOSyntheticWorkflow(object):
         else:
             self.create_workflow_custom()
 
-    def create_workflow_chain(self):
+    def create_workflow_chain(self) -> None:
         self.wf = Workflow(self.wf_name, infer_dependencies=True)
+
 
         ## First job
         f1 = File("j1.txt")
         job1 = (
             Job("keg")
-            .add_args("-o", f1, "-T", 5, "-G", 100, "-u", "M")
+            .add_args("-o", f1, "-T", self.waiting_time[0], "-G", self.files_size[0], "-u", self.size_unit)
             .add_outputs(f1, stage_out=False, register_replica=False)
         )
         self.wf.add_jobs(job1)
@@ -213,21 +249,21 @@ class IOSyntheticWorkflow(object):
             fi = File("f{}.txt".format(i))
             keg = (
                 Job("keg")
-                .add_args("-i", f1, "-o", fi, "-T", 5, "-G", 100, "-u", "M")
+                .add_args("-i", f1, "-o", fi, "-T", self.waiting_time[i], "-G", self.files_size[i], "-u", self.size_unit)
                 .add_inputs(f1)
                 .add_outputs(fi, stage_out=False, register_replica=False)
             )
             f1 = fi
             self.wf.add_jobs(keg)
 
-    def create_workflow_fork(self):
+    def create_workflow_fork(self) -> None:
         self.wf = Workflow(self.wf_name, infer_dependencies=True)
 
         ## First job
         f1 = File("j1.txt")
         job1 = (
             Job("keg")
-            .add_args("-o", f1, "-T", 5, "-G", 100, "-u", "M")
+            .add_args("-o", f1, "-T", self.waiting_time[0], "-G", self.files_size[0], "-u", self.size_unit)
             .add_outputs(f1, stage_out=False, register_replica=False)
         )
         self.wf.add_jobs(job1)
@@ -235,18 +271,18 @@ class IOSyntheticWorkflow(object):
         # Security check to ensure nb of jobs is positive >= 1
         nb_jobs = max(self.shape[1], 1)
 
-        flast = File("f{}.txt".format(nb_jobs+1))
+        flast = File("f{}.txt".format(nb_jobs))
         joblast = (
             Job("keg")
-            .add_args("-o", flast, "-T", 5, "-G", 100, "-u", "M")
+            .add_args("-T", self.waiting_time[nb_jobs-1])
             .add_outputs(flast, stage_out=False, register_replica=False)
         )
 
-        for i in range(1, nb_jobs+1):
+        for i in range(1, nb_jobs-1):
             fi = File("f{}.txt".format(i))
             keg = (
                 Job("keg")
-                .add_args("-i", f1, "-o", fi, "-T", 5, "-G", 100, "-u", "M")
+                .add_args("-i", f1, "-o", fi, "-T", self.waiting_time[i], "-G", self.files_size[i], "-u", self.size_unit)
                 .add_inputs(f1)
                 .add_outputs(fi, stage_out=False, register_replica=False)
             )
@@ -260,10 +296,15 @@ class IOSyntheticWorkflow(object):
         self.wf.add_jobs(joblast)
 
     # --- Create Workflow -----------------------------------------------------
-    def create_workflow_custom(self):
+    def create_workflow_custom(self, 
+            kickstart_record: Optional[Union[List[str], Dict[str, float]]] = None
+        ) -> None:
         self.wf = Workflow(self.wf_name, infer_dependencies=True)
 
         file = self.shape[1]
+
+        if kickstart_record is not None:
+            raise NotImplementedError("kickstart_record support not yet implemented")
 
         with open(file, 'r') as f:
             try:
@@ -271,7 +312,7 @@ class IOSyntheticWorkflow(object):
 
                 for job in data['jobs']:
                     keg = Job("keg")
-                    keg.add_args("-G", 100, "-u", "M")
+                    keg.add_args("-G", 1, "-u", self.size_unit)
 
                     for lfn in job['uses']:
                         fi = File(lfn['lfn'])
@@ -386,7 +427,10 @@ if __name__ == "__main__":
         parser.error('Unknown parsing argument error')
 
     workflow = IOSyntheticWorkflow(
-        exec_site_name=args.execution_site, shape=workflow_class)
+        exec_site_name=args.execution_site, 
+        shape=workflow_class,
+        # waiting_time=[3,4,5,6,11]
+    )
 
     if not args.skip_sites_catalog:
         print("Creating execution sites...")

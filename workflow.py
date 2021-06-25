@@ -37,6 +37,7 @@ class IOSyntheticWorkflow(object):
 
         self.wf_dir = str(Path(__file__).parent.resolve())
         self.exec_site_name = exec_site_name
+
         self.shape = shape            
 
         self.shared_scratch_dir = os.path.join(
@@ -74,14 +75,40 @@ class IOSyntheticWorkflow(object):
             ),
         )
 
-        exec_site = (
-            Site(self.exec_site_name)
+        condorpool = (
+            Site("condorpool")
             .add_pegasus_profile(style="condor")
             .add_condor_profile(universe="vanilla")
             .add_profiles(Namespace.PEGASUS, key="data.configuration", value="condorio")
         )
 
-        self.sc.add_sites(local, exec_site)
+        self.sc.add_sites(local, condorpool)
+
+        if self.exec_site_name == "cori":
+            cori = (
+                Site("cori")
+                .add_grids(
+                    Grid(grid_type=Grid.BATCH, scheduler_type=Scheduler.SLURM, contact="${NERSC_USER}@cori.nersc.gov", job_type=SupportedJobs.COMPUTE),
+                    Grid(grid_type=Grid.BATCH, scheduler_type=Scheduler.SLURM, contact="${NERSC_USER}@cori.nersc.gov", job_type=SupportedJobs.AUXILLARY)
+                )
+                .add_directories(
+                    Directory(Directory.SHARED_SCRATCH, "/global/cscratch1/sd/${NERSC_USER}/pegasus/scratch")
+                        .add_file_servers(FileServer("file:///global/cscratch1/sd/${NERSC_USER}/pegasus/scratch", Operation.ALL)),
+                    Directory(Directory.SHARED_STORAGE, "/global/cscratch1/sd/${NERSC_USER}/pegasus/storage")
+                        .add_file_servers(FileServer("file:///global/cscratch1/sd/${NERSC_USER}/pegasus/storage", Operation.ALL))
+                )
+                .add_pegasus_profile(
+                    style="ssh",
+                    data_configuration="sharedfs",
+                    change_dir="true",
+                    project="${NERSC_PROJECT}",
+                    runtime="300"
+                    # grid_start = "NoGridStart"
+                )
+                .add_env(key="PEGASUS_HOME", value="${NERSC_PEGASUS_HOME}")
+            )
+            self.sc.add_sites(cori)
+
 
     # --- Transformation Catalog (Executables and Containers) -----------------
     def create_transformation_catalog(self):
@@ -105,6 +132,54 @@ class IOSyntheticWorkflow(object):
             pfn=PEGASUS_BIN_DIR + "/pegasus-keg",
             is_stageable=True
         )
+        
+        if self.exec_site_name == "cori":
+            pegasus_transfer = (
+                Transformation("transfer", namespace="pegasus", site="cori", pfn="$PEGASUS_HOME/bin/pegasus-transfer", is_stageable=False)\
+                .add_pegasus_profile(
+                    queue="@escori",
+                    runtime="300",
+                    glite_arguments="--qos=xfer --licenses=SCRATCH"
+                )
+                .add_profiles(Namespace.PEGASUS, key="transfer.threads", value="8")
+                .add_env(key="PEGASUS_TRANSFER_THREADS", value="8")    
+            )
+            pegasus_dirmanager = (
+                Transformation("dirmanager", namespace="pegasus", site="cori", pfn="$PEGASUS_HOME/bin/pegasus-transfer", is_stageable=False)\
+                .add_pegasus_profile(
+                    queue="@escori",
+                    runtime="300",
+                    glite_arguments="--qos=xfer --licenses=SCRATCH"
+                )
+            )
+            pegasus_cleanup = (
+                Transformation("cleanup", namespace="pegasus", site="cori", pfn="$PEGASUS_HOME/bin/pegasus-transfer", is_stageable=False)
+                .add_pegasus_profile(
+                    queue="@escori",
+                    runtime="60",
+                    glite_arguments="--qos=xfer --licenses=SCRATCH"
+                )
+            )
+            system_chmod = (
+                Transformation("chmod", namespace="system", site="cori", pfn="/usr/bin/chmod", is_stageable=False)
+                .add_pegasus_profile(
+                    queue="@escori",
+                    runtime="120",
+                    glite_arguments="--qos=xfer --licenses=SCRATCH"
+                )
+            )
+
+            github_location = "https://raw.githubusercontent.com/pegasus-isi/io-synthetic/master"
+            keg = (
+                Transformation("keg", site="cori", pfn=os.path.join(github_location, "bin/wrapper.sh"), is_stageable=True)
+                .add_pegasus_profile(
+                    cores="1",
+                    runtime="1800",
+                    glite_arguments="--qos=debug --constraint=haswell --licenses=SCRATCH",
+                )
+            )
+
+            self.tc.add_transformations(pegasus_transfer, pegasus_dirmanager, pegasus_cleanup, system_chmod)
 
         self.tc.add_transformations(keg)
 
@@ -219,24 +294,20 @@ class IOSyntheticWorkflow(object):
     # --- Run Workflow -----------------------------------------------------
     def run(self, submit=False, wait=False):
         try:
+            plan_site = [self.exec_site_name]
+            self.wf.plan(
+                dir=self.wf_dir,
+                relative_dir=self.wid,
+                sites=plan_site,
+                output_sites=["local"],
+                output_dir=self.local_storage_dir,
+                cleanup="leaf",
+                force=True,
+                submit=submit
+            )
             if wait:
-                self.wf.plan(
-                    dir=self.wf_dir,
-                    relative_dir=self.wid,
-                    output_sites=["local"],
-                    output_dir=self.local_storage_dir,
-                    cleanup="leaf",
-                    submit=True
-                ).wait()
-            else:
-                self.wf.plan(
-                    dir=self.wf_dir,
-                    relative_dir=self.wid,
-                    output_sites=["local"],
-                    output_dir=self.local_storage_dir,
-                    cleanup="leaf",
-                    submit=submit
-                )
+                self.wf.wait()
+
         except Exception as e:
             print(e)
             sys.exit(-1)

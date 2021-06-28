@@ -6,8 +6,10 @@ module load craype-haswell
 old_dir=`pwd`
 cd $PEGASUS_SCRATCH_DIR
 
+cmd="srun -n 1 ${PEGASUS_HOME}/bin/pegasus-keg $@"
+echo ${cmd}
 start=$SECONDS
-srun -n 1 ${PEGASUS_HOME}/bin/pegasus-keg $@
+${cmd}
 end=$SECONDS
 echo "Duration: $((end-start)) seconds."
 

@@ -1,0 +1,114 @@
+{
+    "workflow": {
+        "filter_level": "NONE",
+        "nodes": [
+            {
+                "start_proc": 0,
+                "nprocs": 1,
+                "cmdline": "./pegasus-mpi-keg -i keg-100K.out -D 1",
+                "func": "prod",
+                "inports": [],
+                "outports": [
+                    "out"
+                ]
+            },
+            {
+             	"start_proc": 1,
+                "nprocs": 1,
+                "cmdline": "./pegasus-mpi-keg -D 2",
+                "func": "interm",
+                "inports": ["in"],
+                "outports": [
+                    "out"
+                ]
+            },
+            {
+             	"start_proc": 2,
+                "nprocs": 1,
+                "cmdline": "./pegasus-mpi-keg -D 2",
+                "func": "interm2",
+                "inports": ["in"],
+                "outports": [
+                    "out"
+                ]
+            },
+            {
+             	"start_proc": 3,
+                "nprocs": 1,
+                "cmdline": "./pegasus-mpi-keg -D 2",
+                "func": "interm3",
+                "inports": ["in"],
+                "outports": [
+                    "out"
+                ]
+            },
+            {
+             	"start_proc": 4,
+                "nprocs": 1,
+                "cmdline": "./pegasus-mpi-keg -D 0",
+                "func": "con",
+                "inports": ["in"],
+                "outports": [
+                ]
+            }
+        ],
+        "edges": [
+            {
+             	"start_proc": 0,
+                "nprocs": 0,
+                "source": 0,
+                "target": 1,
+                "prod_dflow_redist": "count",
+                "name": "prod_interm",
+                "sourcePort": "out",
+                "targetPort": "in",
+                "tokens": 0,
+                "transport": "mpi",
+                "func": "dflow",
+                "dflow_con_redist": "count"
+            },
+            {
+             	"start_proc": 0,
+                "nprocs": 0,
+                "source": 1,
+                "target": 2,
+                "prod_dflow_redist": "count",
+                "name": "interm1_interm2",
+                "sourcePort": "out",
+                "targetPort": "in",
+                "tokens": 0,
+                "transport": "mpi",
+                "func": "dflow",
+                "dflow_con_redist": "count"
+            },
+            {
+             	"start_proc": 0,
+                "nprocs": 0,
+                "source": 2,
+                "target": 3,
+                "prod_dflow_redist": "count",
+                "name": "interm2_interm3",
+                "sourcePort": "out",
+                "targetPort": "in",
+                "tokens": 0,
+                "transport": "mpi",
+                "func": "dflow",
+                "dflow_con_redist": "count"
+            },
+            {
+                "start_proc": 0,
+                "nprocs": 0,
+                "source": 3,
+                "target": 4,
+                "prod_dflow_redist": "count",
+                "name": "interm3_con",
+                "sourcePort": "out",
+                "targetPort": "in",
+                "tokens": 0,
+             	"transport": "mpi",
+                "func": "dflow",
+                "dflow_con_redist": "count"
+            }
+        ]
+    }
+}

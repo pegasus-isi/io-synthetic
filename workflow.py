@@ -20,6 +20,7 @@ class IOSyntheticWorkflow(object):
     wf = None
     sc = None
     tc = None
+    rc = None
     props = None
 
     dagfile = None
@@ -87,6 +88,7 @@ class IOSyntheticWorkflow(object):
             self.sc.write()
         self.props.write()
         self.tc.write()
+        self.rc.write()
         self.wf.write()
 
     # --- Configuration (Pegasus Properties) ----------------------------------
@@ -205,13 +207,15 @@ class IOSyntheticWorkflow(object):
             )
 
             github_location = "https://raw.githubusercontent.com/pegasus-isi/io-synthetic/master"
+            wrapper_fn = os.path.join(github_location, "bin/wrapper_darshan.sh")
             keg = (
-                Transformation("keg", site="cori", pfn=os.path.join(github_location, "bin/wrapper.sh"), is_stageable=True)
+                Transformation("keg", site="cori", pfn=wrapper_fn, is_stageable=True)
                 .add_pegasus_profile(
                     cores="1",
                     runtime="1800",
                     glite_arguments="--qos=debug --constraint=haswell --licenses=SCRATCH",
                 )
+                .add_env(key="USER_HOME", value="${NERSC_USER_HOME}")
             )
 
             self.tc.add_transformations(pegasus_transfer, pegasus_dirmanager, pegasus_cleanup, system_chmod)
@@ -219,11 +223,25 @@ class IOSyntheticWorkflow(object):
         self.tc.add_transformations(keg)
 
 
+    # --- Replica Catalog -----------------    
+    def create_replica_catalog(self, file_path) -> None:
+        self.rc = ReplicaCatalog()
+
+        file_site = "local"
+        if self.exec_site_name == "cori":
+            file_site = "cori"
+        
+        if file_path:
+            self.rc.add_replica(file_site, "f0.txt", file_path)
+
+
     # --- Create Workflow -----------------------------------------------------
 
     def create_workflow(self) -> None:
         if self.shape[0] == "chain":
             self.create_workflow_chain()
+        elif self.shape[0] == "new_chain":
+            self.create_workflow_new_chain()
         elif self.shape[0] == "fork":
             self.create_workflow_fork()
         else:
@@ -231,7 +249,6 @@ class IOSyntheticWorkflow(object):
 
     def create_workflow_chain(self) -> None:
         self.wf = Workflow(self.wf_name, infer_dependencies=True)
-
 
         ## First job
         f1 = File("j1.txt")
@@ -250,6 +267,24 @@ class IOSyntheticWorkflow(object):
             keg = (
                 Job("keg")
                 .add_args("-i", f1, "-o", fi, "-T", self.waiting_time[i], "-G", self.files_size[i], "-u", self.size_unit)
+                .add_inputs(f1)
+                .add_outputs(fi, stage_out=False, register_replica=False)
+            )
+            f1 = fi
+            self.wf.add_jobs(keg)
+
+    def create_workflow_new_chain(self) -> None:
+        self.wf = Workflow(self.wf_name, infer_dependencies=True)
+
+        # Security check to ensure nb of jobs is positive >= 1
+        nb_jobs = max(self.shape[1], 1)
+
+        f1 = File("f0.txt")
+        for i in range(1, nb_jobs+1):
+            fi = File("f{}.txt".format(i))
+            keg = (
+                Job("keg")
+                .add_args("-i", f1, "-o", fi, "-G", self.files_size[i-1], "-u", self.size_unit)
                 .add_inputs(f1)
                 .add_outputs(fi, stage_out=False, register_replica=False)
             )
@@ -396,6 +431,14 @@ if __name__ == "__main__":
         default=1,
         help="Number of jobs generated, only valid if chain or fork have been chosen (default: 1)",
     )
+    parser.add_argument(
+        "-p",
+        "--file-path",
+        metavar="STR",
+        type=str,
+        default=None,
+        help="Path of input file for the first job",
+    )
 
     # parser.add_argument(
     #     "-o",
@@ -408,20 +451,20 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    if not args.workflow_class in ["chain", "fork", "custom"]:
+    if not args.workflow_class in ["chain", "new_chain", "fork", "custom"]:
         parser.error('-c/--workflow-class can only be set to "chain", "fork" or "custom".')
     
     if args.workflow_class == "custom" and args.workflow_yml is None:
         parser.error(
             '-c/--workflow-class == "custom" requires -w/--workflow-yml to be set.')
 
-    if args.workflow_class in ["chain", "fork"] and (args.number_jobs is None or args.number_jobs < 1):
+    if args.workflow_class in ["chain", "new_chain", "fork"] and (args.number_jobs is None or args.number_jobs < 1):
         parser.error(
             '-c/--workflow-class == "chain" or "fork" requires -n/--number-jobs to be set (and it must be >=1).')
 
     if args.workflow_class == "custom":
         workflow_class = (args.workflow_class, args.workflow_yml)
-    elif args.workflow_class in ["chain", "fork"]:
+    elif args.workflow_class in ["chain", "new_chain", "fork"]:
         workflow_class = (args.workflow_class, args.number_jobs)
     else:
         parser.error('Unknown parsing argument error')
@@ -429,7 +472,9 @@ if __name__ == "__main__":
     workflow = IOSyntheticWorkflow(
         exec_site_name=args.execution_site, 
         shape=workflow_class,
-        # waiting_time=[3,4,5,6,11]
+        files_size=[1.0,1.0],
+        # waiting_time=[60,60,60,60,60],
+        size_unit='M'
     )
 
     if not args.skip_sites_catalog:
@@ -441,6 +486,9 @@ if __name__ == "__main__":
 
     print("Creating transformation catalog...")
     workflow.create_transformation_catalog()
+
+    print("Creating replica catalog...")
+    workflow.create_replica_catalog(args.file_path)
 
     print("Creating pipeline workflow dag...")
     workflow.create_workflow()

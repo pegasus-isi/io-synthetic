@@ -488,9 +488,8 @@ identify( char *result, size_t size, const char *arg0,
     free( static_cast<void *>(line) );
 }
 
-void
-helpMe( const char *ptr, unsigned long timeout, unsigned long spinout,
-        const char *prefix )
+void helpMe(const char *ptr, unsigned long timeout, unsigned long spinout,
+            unsigned long sleeptime, const char *prefix)
 {
     printf( "Usage:\t%s [-a appname] [(-t|-T) thinktime] [-l fn] [-o fn [..]]\n"
             "\t[-i fn [..] | -G size] [-e env [..]] [-p p [..]] [-P ps] [-h]\n",
@@ -502,6 +501,7 @@ helpMe( const char *ptr, unsigned long timeout, unsigned long spinout,
 #endif
     printf( " -t to\tsleep for 'to' seconds during execution, default %lu\n", timeout );
     printf( " -T to\tspin for 'to' seconds during execution, default %lu\n", spinout );
+    printf( " -X to\tsleep for 'to' seconds after the I/O phase, default %lu\n", sleeptime);
     printf( " -l fn\tappend own information atomically to a logfile\n" );
     printf( " -o ..\tenumerate space-separated list output files to create\n\
         Accept also '<filename>=<filesize><data_unit>' form, where <data_unit>\n\
@@ -696,7 +696,10 @@ main( int argc, char *argv[] )
     unsigned long spinout = 0;
     // required wall time
     unsigned long timeout = 0;
-    // buffer for mock memory or input files content 
+    // required sleep time
+    unsigned long sleeptime = 0;
+
+    // buffer for mock memory or input files content
     char *memory_buffer = NULL;
     // auxiliary variables for memory management
     unsigned long memory_size = 0;
@@ -726,7 +729,7 @@ main( int argc, char *argv[] )
     // complain, if no parameters were given
     if ( rank == 0 && argc == 1 )
     {
-        helpMe( ptr, timeout, spinout, prefix );
+        helpMe( ptr, timeout, spinout, sleeptime, prefix );
         return 0;
     }
 
@@ -738,7 +741,7 @@ main( int argc, char *argv[] )
         char *s = argv[i];
         if ( s[0] == '-' && s[1] != 0 )
         {
-            if ( strchr( "iotTGaepPlCmruh\0", s[1] ) != NULL )
+            if ( strchr( "iotTGaepPlCmruhX\0", s[1] ) != NULL )
             {
                 switch (s[1])
                 {
@@ -778,6 +781,9 @@ main( int argc, char *argv[] )
                 case 'u':
                     state = 17;
                     break;
+                case 'X':
+                    state = 19;
+                    break;
 #ifdef WITH_MPI
                 case 'r':
                     root_only_memory_allocation = true;
@@ -788,7 +794,7 @@ main( int argc, char *argv[] )
                     continue;
 
                 case 'h':
-                    helpMe( ptr, timeout, spinout, prefix );
+                    helpMe( ptr, timeout, spinout, sleeptime, prefix );
                     return 0;
                 }
                 s += 2;
@@ -826,6 +832,9 @@ main( int argc, char *argv[] )
             case 17:
                 data_unit = s[0];
                 break;
+            case 19:
+                sleeptime = strtoul(s, 0, 10);
+                break;
             }
             state = 0;
         }
@@ -835,11 +844,26 @@ main( int argc, char *argv[] )
         }
     }
 
-    if ( memory_size )
+    if (sleeptime > 0 && timeout > 0) 
     {
-        if ( (rank == 0) || (! root_only_memory_allocation) )
+        sleeptime = fabs(sleeptime - timeout);
+    }
+
+    if (sleeptime > 0 && spinout > 0)
+    {
+        sleeptime = fabs(sleeptime - spinout);
+    }
+
+    if (timeout > sleeptime || spinout > sleeptime)
+    {
+        sleeptime = 0;
+    }
+
+    if (memory_size)
+    {
+        if ((rank == 0) || (!root_only_memory_allocation))
         {
-            memory_buffer = allocate_mem_buffer( mem_buf_size );
+            memory_buffer = allocate_mem_buffer(mem_buf_size);
         }
     }
 
@@ -1003,20 +1027,25 @@ main( int argc, char *argv[] )
         }
     }
 
+    if ( sleeptime )
+    {
+        sleep(sleeptime);
+    }
+
     // append atomically to logfile
-    if ( rank == 0 && logfile != 0 )
+    if (rank == 0 && logfile != 0)
     {
         int fd = -1;
-        if ( (fd = open( logfile, O_WRONLY | O_CREAT | O_APPEND, 0666 )) == -1 )
+        if ((fd = open(logfile, O_WRONLY | O_CREAT | O_APPEND, 0666)) == -1)
         {
-            fprintf( stderr, "WARNING: open(%s): %s\n", logfile, strerror(errno) );
+            fprintf(stderr, "WARNING: open(%s): %s\n", logfile, strerror(errno));
         }
         else
         {
-            memset( buffer, 0, bufsize );
-            identify( buffer, bufsize, ptr, start, condor, iox, logfile );
-            append( buffer, bufsize, '\n' );
-            write( fd, buffer, strlen(buffer) ); // atomic write
+            memset(buffer, 0, bufsize);
+            identify(buffer, bufsize, ptr, start, condor, iox, logfile);
+            append(buffer, bufsize, '\n');
+            write(fd, buffer, strlen(buffer)); // atomic write
             close(fd);
         }
     }

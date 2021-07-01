@@ -491,7 +491,7 @@ identify( char *result, size_t size, const char *arg0,
 void helpMe(const char *ptr, unsigned long timeout, unsigned long spinout,
             unsigned long sleeptime, const char *prefix)
 {
-    printf( "Usage:\t%s [-a appname] [(-t|-T) thinktime] [-l fn] [-o fn [..]]\n"
+    printf( "Usage:\t%s [-a appname] [(-s|-t|-T) thinktime] [-l fn] [-o fn [..]]\n"
             "\t[-i fn [..] | -G size] [-e env [..]] [-p p [..]] [-P ps] [-h]\n",
             ptr );
     printf( " -a app\tset name of application to something else, default %s\n", ptr );
@@ -500,8 +500,8 @@ void helpMe(const char *ptr, unsigned long timeout, unsigned long spinout,
     printf( " -r \tallocate memory specified with the '-m' switch only in the root process\n" );
 #endif
     printf( " -t to\tsleep for 'to' seconds during execution, default %lu\n", timeout );
+    printf( " -s to\tsleep for 'to' seconds after the I/O phase, default %lu\n", sleeptime);
     printf( " -T to\tspin for 'to' seconds during execution, default %lu\n", spinout );
-    printf( " -X to\tsleep for 'to' seconds after the I/O phase, default %lu\n", sleeptime);
     printf( " -l fn\tappend own information atomically to a logfile\n" );
     printf( " -o ..\tenumerate space-separated list output files to create\n\
         Accept also '<filename>=<filesize><data_unit>' form, where <data_unit>\n\
@@ -741,7 +741,7 @@ main( int argc, char *argv[] )
         char *s = argv[i];
         if ( s[0] == '-' && s[1] != 0 )
         {
-            if ( strchr( "iotTGaepPlCmruhX\0", s[1] ) != NULL )
+            if ( strchr( "iotTGaepPlCmruhs\0", s[1] ) != NULL )
             {
                 switch (s[1])
                 {
@@ -781,7 +781,7 @@ main( int argc, char *argv[] )
                 case 'u':
                     state = 17;
                     break;
-                case 'X':
+                case 's':
                     state = 19;
                     break;
 #ifdef WITH_MPI

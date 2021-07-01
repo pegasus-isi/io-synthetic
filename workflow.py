@@ -31,9 +31,10 @@ class IOSyntheticWorkflow(object):
     def __init__(self,
                  shape: Optional[Tuple[str, Union[int, str]]] = ("chain", 1),
                  exec_site_name: Optional[str] = "condorpool",
+                 binary_path: Optional[str] = "vanilla",
                  files_size: Optional[Union[List[float], Dict[str,float]]]=[1.0],
-                 size_unit: Optional[str] = 'B',
-                 waiting_time: Optional[Union[List[float], Dict[str,float]]] = [5.0],
+                 size_unit: Optional[str] = 'G',
+                 waiting_time: Optional[Union[List[float], Dict[str,float]]] = [2.0],
                 ) -> None:
         self.wf_name = "io-synthetic"
         self.wid = self.wf_name + "-" + datetime.now().strftime("%s")
@@ -43,13 +44,14 @@ class IOSyntheticWorkflow(object):
         self.exec_site_name = exec_site_name
 
         self.shape = shape
+        self.binary_path = binary_path
         self.size_unit = size_unit.upper()
         self.files_size = files_size
         self.waiting_time = waiting_time
 
         ## Security checks
         if self.size_unit not in ['B', 'K', 'M', 'G']:
-            print("Error: Unit size accepted values are [B, K, M, G] (default: B).")
+            print("Error: Unit size accepted values are [B, K, M, G] (default: G).")
             sys.exit(-1)
         
         if isinstance(files_size, list) and len(files_size) == 1:
@@ -151,24 +153,31 @@ class IOSyntheticWorkflow(object):
     def create_transformation_catalog(self) -> None:
         self.tc = TransformationCatalog()
 
-        # --- Transformations ---------------------------------------------------------------
-        try:
-            pegasus_config = subprocess.run(
-                ["pegasus-config", "--bin"], stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        if self.binary_path == "vanilla":
+            # --- Transformations ---------------------------------------------------------------
+            try:
+                pegasus_config = subprocess.run(
+                    ["pegasus-config", "--bin"], stdout=subprocess.PIPE, stderr=subprocess.PIPE
+                )
+            except FileNotFoundError as e:
+                print("Unable to find pegasus-config")
+
+            assert pegasus_config.returncode == 0
+
+            PEGASUS_BIN_DIR = pegasus_config.stdout.decode().strip()
+            keg = Transformation(
+                "keg",
+                site="local",
+                pfn=PEGASUS_BIN_DIR + "/pegasus-keg",
+                is_stageable=True
             )
-        except FileNotFoundError as e:
-            print("Unable to find pegasus-config")
-
-        assert pegasus_config.returncode == 0
-
-        PEGASUS_BIN_DIR = pegasus_config.stdout.decode().strip()
-
-        keg = Transformation(
-            "keg",
-            site="local",
-            pfn=PEGASUS_BIN_DIR + "/pegasus-keg",
-            is_stageable=True
-        )
+        else:
+            keg = Transformation(
+                "keg",
+                site="local",
+                pfn=self.wf_dir + "/bin/" + self.binary_path,
+                is_stageable=True
+            )
         
         if self.exec_site_name == "cori":
             pegasus_transfer = (
@@ -254,8 +263,8 @@ class IOSyntheticWorkflow(object):
         f1 = File("j1.txt")
         job1 = (
             Job("keg")
-            .add_args("-o", f1, "-T", self.waiting_time[0], "-G", self.files_size[0], "-u", self.size_unit)
-            .add_outputs(f1, stage_out=False, register_replica=False)
+            .add_args("-o", f1, "-s", self.waiting_time[0], "-G", self.files_size[0], "-u", self.size_unit)
+            .add_outputs(f1, stage_out=False, register_replica=True)
         )
         self.wf.add_jobs(job1)
 
@@ -266,7 +275,7 @@ class IOSyntheticWorkflow(object):
             fi = File("f{}.txt".format(i))
             keg = (
                 Job("keg")
-                .add_args("-i", f1, "-o", fi, "-T", self.waiting_time[i], "-G", self.files_size[i], "-u", self.size_unit)
+                .add_args("-i", f1, "-o", fi, "-s", self.waiting_time[i], "-G", self.files_size[i], "-u", self.size_unit)
                 .add_inputs(f1)
                 .add_outputs(fi, stage_out=False, register_replica=False)
             )
@@ -298,7 +307,7 @@ class IOSyntheticWorkflow(object):
         f1 = File("j1.txt")
         job1 = (
             Job("keg")
-            .add_args("-o", f1, "-T", self.waiting_time[0], "-G", self.files_size[0], "-u", self.size_unit)
+            .add_args("-o", f1, "-s", self.waiting_time[0], "-G", self.files_size[0], "-u", self.size_unit)
             .add_outputs(f1, stage_out=False, register_replica=False)
         )
         self.wf.add_jobs(job1)
@@ -309,7 +318,7 @@ class IOSyntheticWorkflow(object):
         flast = File("f{}.txt".format(nb_jobs))
         joblast = (
             Job("keg")
-            .add_args("-T", self.waiting_time[nb_jobs-1])
+            .add_args("-s", self.waiting_time[nb_jobs-1])
             .add_outputs(flast, stage_out=False, register_replica=False)
         )
 
@@ -317,7 +326,7 @@ class IOSyntheticWorkflow(object):
             fi = File("f{}.txt".format(i))
             keg = (
                 Job("keg")
-                .add_args("-i", f1, "-o", fi, "-T", self.waiting_time[i], "-G", self.files_size[i], "-u", self.size_unit)
+                .add_args("-i", f1, "-o", fi, "-s", self.waiting_time[i], "-G", self.files_size[i], "-u", self.size_unit)
                 .add_inputs(f1)
                 .add_outputs(fi, stage_out=False, register_replica=False)
             )
@@ -440,6 +449,15 @@ if __name__ == "__main__":
         help="Path of input file for the first job",
     )
 
+    parser.add_argument(
+        "-b",
+        "--bin-path",
+        metavar="STR",
+        type=str,
+        default="vanilla",
+        help="Name of the binary you want to use (must exist in bin/ directory). If set to 'vanilla' then pegasus-keg furnished by Pegasus will be used (default: vanilla)",
+    )
+
     # parser.add_argument(
     #     "-o",
     #     "--output",
@@ -470,11 +488,12 @@ if __name__ == "__main__":
         parser.error('Unknown parsing argument error')
 
     workflow = IOSyntheticWorkflow(
-        exec_site_name=args.execution_site, 
+        exec_site_name=args.execution_site,
+        binary_path=args.bin_path,
         shape=workflow_class,
-        files_size=[1.0,1.0],
-        # waiting_time=[60,60,60,60,60],
-        size_unit='M'
+        files_size=[1.0],
+        waiting_time=[2],
+        size_unit='G'
     )
 
     if not args.skip_sites_catalog:

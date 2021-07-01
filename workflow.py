@@ -505,7 +505,7 @@ if __name__ == "__main__":
         shape=workflow_class,
         files_size=[1.0, 1.0],
         waiting_time=[2, 2],
-        size_unit='M'
+        size_unit='G'
     )
 
     if not args.skip_sites_catalog:

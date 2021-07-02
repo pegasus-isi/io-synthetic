@@ -29,6 +29,7 @@ class IOSyntheticWorkflow(object):
 
     # --- Init ----------------------------------------------------------------
     def __init__(self,
+                 wf_name: Optional[str] = 'io-synthetic',
                  shape: Optional[Tuple[str, Union[int, str]]] = ("chain", 1),
                  exec_site_name: Optional[str] = "condorpool",
                  binary_path: Optional[str] = "vanilla",
@@ -36,7 +37,7 @@ class IOSyntheticWorkflow(object):
                  size_unit: Optional[str] = 'G',
                  waiting_time: Optional[Union[List[float], Dict[str,float]]] = [2.0],
                 ) -> None:
-        self.wf_name = "io-synthetic"
+        self.wf_name = wf_name
         self.wid = self.wf_name + "-" + datetime.now().strftime("%s")
         self.dagfile = self.wid+".yml"
 
@@ -500,11 +501,12 @@ if __name__ == "__main__":
         parser.error('Unknown parsing argument error')
 
     workflow = IOSyntheticWorkflow(
+        wf_name='io-synthetic-2g',
         exec_site_name=args.execution_site,
         binary_path=args.bin_path,
         shape=workflow_class,
-        files_size=[1.0, 1.0],
-        waiting_time=[2, 2],
+        files_size=[2.0,2.0,2.0,2.0,2.0],
+        waiting_time=[4,4,4,4,4],
         size_unit='G'
     )
 

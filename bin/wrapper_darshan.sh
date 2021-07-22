@@ -14,7 +14,7 @@ DARSHAN="--export=ALL,DARSHAN_ENABLE_NONMPI=1,LD_PRELOAD=${USER_HOME}/software/i
 old_dir=`pwd`
 cd $PEGASUS_SCRATCH_DIR
 
-cmd="srun -n 1 ${DARSHAN} ${PEGASUS_HOME}/bin/pegasus-keg $@"
+cmd="srun -n 1 ${DARSHAN} ${EXEC} $@"
 echo ${cmd}
 start=$SECONDS
 ${cmd}

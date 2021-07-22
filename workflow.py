@@ -29,6 +29,7 @@ class IOSyntheticWorkflow(object):
 
     # --- Init ----------------------------------------------------------------
     def __init__(self,
+                 wf_name: Optional[str] = 'io-synthetic',
                  shape: Optional[Tuple[str, Union[int, str]]] = ("chain", 1),
                  exec_site_name: Optional[str] = "condorpool",
                  binary_path: Optional[str] = "vanilla",
@@ -36,7 +37,7 @@ class IOSyntheticWorkflow(object):
                  size_unit: Optional[str] = 'G',
                  waiting_time: Optional[Union[List[float], Dict[str,float]]] = [2.0],
                 ) -> None:
-        self.wf_name = "io-synthetic"
+        self.wf_name = wf_name
         self.wid = self.wf_name + "-" + datetime.now().strftime("%s")
         self.dagfile = self.wid+".yml"
 
@@ -153,29 +154,29 @@ class IOSyntheticWorkflow(object):
     def create_transformation_catalog(self) -> None:
         self.tc = TransformationCatalog()
 
-        if self.binary_path == "vanilla":
-            # --- Transformations ---------------------------------------------------------------
-            try:
-                pegasus_config = subprocess.run(
-                    ["pegasus-config", "--bin"], stdout=subprocess.PIPE, stderr=subprocess.PIPE
-                )
-            except FileNotFoundError as e:
-                print("Unable to find pegasus-config")
-
-            assert pegasus_config.returncode == 0
-
-            PEGASUS_BIN_DIR = pegasus_config.stdout.decode().strip()
-            keg = Transformation(
-                "keg",
-                site="local",
-                pfn=PEGASUS_BIN_DIR + "/pegasus-keg",
-                is_stageable=True
+        
+        # --- Transformations ---------------------------------------------------------------
+        try:
+            pegasus_config = subprocess.run(
+                ["pegasus-config", "--bin"], stdout=subprocess.PIPE, stderr=subprocess.PIPE
             )
-        else:
+        except FileNotFoundError as e:
+            print("Unable to find pegasus-config")
+
+        assert pegasus_config.returncode == 0
+
+        PEGASUS_BIN_DIR = pegasus_config.stdout.decode().strip()
+        keg = Transformation(
+            "keg",
+            site="local",
+            pfn=PEGASUS_BIN_DIR + "/pegasus-keg",
+            is_stageable=True
+        )
+        if self.binary_path:
             keg = Transformation(
                 "keg",
                 site="local",
-                pfn=self.wf_dir + "/bin/" + self.binary_path,
+                pfn=self.binary_path,
                 is_stageable=True
             )
         
@@ -217,6 +218,11 @@ class IOSyntheticWorkflow(object):
 
             github_location = "https://raw.githubusercontent.com/pegasus-isi/io-synthetic/master"
             wrapper_fn = os.path.join(github_location, "bin/wrapper_darshan.sh")
+
+            exec_path = "$PEGASUS_HOME/bin/pegasus-keg"
+            if self.binary_path:
+                exec_path = self.binary_path
+
             keg = (
                 Transformation("keg", site="cori", pfn=wrapper_fn, is_stageable=True)
                 .add_pegasus_profile(
@@ -225,6 +231,7 @@ class IOSyntheticWorkflow(object):
                     glite_arguments="--qos=debug --constraint=haswell --licenses=SCRATCH",
                 )
                 .add_env(key="USER_HOME", value="${NERSC_USER_HOME}")
+                .add_env(key="EXEC", value=exec_path)
             )
 
             self.tc.add_transformations(pegasus_transfer, pegasus_dirmanager, pegasus_cleanup, system_chmod)
@@ -233,6 +240,7 @@ class IOSyntheticWorkflow(object):
 
 
     # --- Replica Catalog -----------------    
+
     def create_replica_catalog(self, file_path) -> None:
         self.rc = ReplicaCatalog()
 
@@ -242,6 +250,7 @@ class IOSyntheticWorkflow(object):
         
         if file_path:
             self.rc.add_replica(file_site, "f0.txt", file_path)
+
 
 
     # --- Create Workflow -----------------------------------------------------
@@ -293,7 +302,7 @@ class IOSyntheticWorkflow(object):
             fi = File("f{}.txt".format(i))
             keg = (
                 Job("keg")
-                .add_args("-i", f1, "-o", fi, "-G", self.files_size[i-1], "-u", self.size_unit)
+                .add_args("-i", f1, "-o", fi, "-s", self.waiting_time[i-1], "-G", self.files_size[i-1], "-u", self.size_unit)
                 .add_inputs(f1)
                 .add_outputs(fi, stage_out=False, register_replica=False)
             )
@@ -446,7 +455,7 @@ if __name__ == "__main__":
         metavar="STR",
         type=str,
         default=None,
-        help="Path of input file for the first job",
+        help="Absolute path of input file for the first job",
     )
 
     parser.add_argument(
@@ -454,8 +463,8 @@ if __name__ == "__main__":
         "--bin-path",
         metavar="STR",
         type=str,
-        default="vanilla",
-        help="Name of the binary you want to use (must exist in bin/ directory). If set to 'vanilla' then pegasus-keg furnished by Pegasus will be used (default: vanilla)",
+        default=None,
+        help="Absolute path of the binary you want to use. If this option is not specified, pegasus-keg furnished by Pegasus will be used.",
     )
 
     # parser.add_argument(
@@ -480,6 +489,10 @@ if __name__ == "__main__":
         parser.error(
             '-c/--workflow-class == "chain" or "fork" requires -n/--number-jobs to be set (and it must be >=1).')
 
+    # if not args.bin_path:
+    #     parser.error(
+    #         '-b/--bin-path must not be empty.')
+
     if args.workflow_class == "custom":
         workflow_class = (args.workflow_class, args.workflow_yml)
     elif args.workflow_class in ["chain", "new_chain", "fork"]:
@@ -488,11 +501,12 @@ if __name__ == "__main__":
         parser.error('Unknown parsing argument error')
 
     workflow = IOSyntheticWorkflow(
+        wf_name='io-synthetic-2g',
         exec_site_name=args.execution_site,
         binary_path=args.bin_path,
         shape=workflow_class,
-        files_size=[1.0],
-        waiting_time=[2],
+        files_size=[2.0,2.0,2.0,2.0,2.0],
+        waiting_time=[4,4,4,4,4],
         size_unit='G'
     )
 

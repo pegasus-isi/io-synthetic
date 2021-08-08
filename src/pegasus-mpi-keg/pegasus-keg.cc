@@ -723,6 +723,8 @@ main( int argc, char *argv[] )
     unsigned long spinout = 0;
     // required wall time
     unsigned long timeout = 0;
+
+    unsigned long sleeptime = 0;
     // buffer for mock memory or input files content
     char *memory_buffer = NULL;
     // auxiliary variables for memory management
@@ -765,7 +767,7 @@ main( int argc, char *argv[] )
         char *s = argv[i];
         if ( s[0] == '-' && s[1] != 0 )
         {
-            if ( strchr( "iotTGaepPlCmruhD\0", s[1] ) != NULL )
+            if ( strchr( "iotTGaepPlCmruhDs\0", s[1] ) != NULL )
             {
                 switch (s[1])
                 {
@@ -810,6 +812,9 @@ main( int argc, char *argv[] )
                     state = 18;
                     break;
 #endif
+                case 's':
+                    state = 19;
+                    break;
 #ifdef WITH_MPI
                 case 'r':
                     root_only_memory_allocation = true;
@@ -869,6 +874,10 @@ main( int argc, char *argv[] )
                         fprintf(stderr, "I'm Decaf consumer at rank %d\n", decaf->world->rank());
                 break;
 #endif
+
+            case 19:
+                sleeptime = strtoul(s, 0, 10);
+                break;
             }
             state = 0;
         }
@@ -887,7 +896,7 @@ main( int argc, char *argv[] )
         }
     }
 
-    if (rank == 0)
+    if (rank == 0 || rank == 4) //orc@01-07: workaround for last consumer rank to output file
     {
         // PHASE 1 - reading input files to memory if any; use the memory_buffer for storing all the file content
         // 1. check how much memory do we need
@@ -928,14 +937,29 @@ main( int argc, char *argv[] )
 #ifdef WITH_DECAF
         if(prod==1)
         {
-            //orc@23-06: sending this memory buffer at the producer
-	    pConstructData container;
-            ArrayFieldc data(memory_buffer, data_size, 1);
-            container->appendData("pos", data,
-                                  DECAF_NOFLAG, DECAF_PRIVATE,
-                                  DECAF_SPLIT_DEFAULT, DECAF_MERGE_DEFAULT);
-	    decaf->put(container, "out");
+	    int size_limit = 1073742007;
+	    int idx = 0;
+	    int offset = 0;
+            int count = data_size/size_limit; //orc@01-07: will send chunks of 1GB
+            if (data_size == size_limit) count = 0;
 
+	    for (int k = 0; k<count+1; k++)
+            {
+		if (k!=count) offset = size_limit;
+		else offset = data_size - (size_limit*k);
+		char* prod_buffer = static_cast<char *>( malloc( sizeof(char) * offset ) );
+                memcpy(prod_buffer, &memory_buffer[idx], offset );
+                //orc@23-06: sending this memory buffer at the producer
+	        pConstructData container;
+                ArrayFieldc data(prod_buffer, offset, 1);
+                container->appendData("pos", data,
+                                      DECAF_NOFLAG, DECAF_PRIVATE,
+                                      DECAF_SPLIT_DEFAULT, DECAF_MERGE_DEFAULT);
+	        decaf->put(container, "out");
+		free( static_cast<void *>(prod_buffer) );
+		idx += size_limit;
+		if (sleeptime) sleep(sleeptime);
+            }
             fprintf(stderr, "producer %d terminating\n", decaf->world->rank());
             decaf->terminate();
         }
@@ -1030,6 +1054,8 @@ main( int argc, char *argv[] )
                 }
                 else
                     fprintf(stderr, "Error: null pointer in con\n");
+
+                if (sleeptime) sleep(sleeptime);
         } //end-while
 
         //terminate the task (mandatory) by sending a quit message to the rest of the workflow
@@ -1042,9 +1068,10 @@ main( int argc, char *argv[] )
         {
 
             map<string, pConstructData> in_data;
-            pConstructData container;
             while (decaf->get(in_data))
             {
+                pConstructData container;
+
                 ArrayFieldc field = in_data.at("in")->getFieldData<ArrayFieldc>("pos");
                 if (field){
                     fprintf(stderr, "Received data in dataflow\n");
@@ -1057,6 +1084,7 @@ main( int argc, char *argv[] )
                                       DECAF_NOFLAG, DECAF_PRIVATE,
                                       DECAF_SPLIT_DEFAULT, DECAF_MERGE_DEFAULT);
                 decaf->put(container, "out");
+                if (sleeptime) sleep(sleeptime);
             } //end-while
 
             // terminate the task (mandatory) by sending a quit message to the rest of the workflow
@@ -1151,8 +1179,6 @@ main( int argc, char *argv[] )
 #endif
 
 #ifdef WITH_MPI
-    //spin(2);
-    //sleep(2); //orc@30-06: TODO this can be parametrized to emulate the HPC apps. fashion
     MPI_Finalize();
 #endif
 

@@ -5,7 +5,7 @@
             {
                 "start_proc": 0,
                 "nprocs": 1,
-                "cmdline": "./pegasus-mpi-keg -i keg-100K.out -D 1",
+                "cmdline": "./pegasus-mpi-keg -i /global/cscratch1/sd/oyildiz/keg-data/keg-1G.in -D 1 -s 2",
                 "func": "prod",
                 "inports": [],
                 "outports": [
@@ -15,7 +15,7 @@
             {
              	"start_proc": 1,
                 "nprocs": 1,
-                "cmdline": "./pegasus-mpi-keg -D 2",
+                "cmdline": "./pegasus-mpi-keg -D 2 -s 2",
                 "func": "interm",
                 "inports": ["in"],
                 "outports": [
@@ -25,7 +25,7 @@
             {
              	"start_proc": 2,
                 "nprocs": 1,
-                "cmdline": "./pegasus-mpi-keg -D 2",
+                "cmdline": "./pegasus-mpi-keg -D 2 -s 2",
                 "func": "interm2",
                 "inports": ["in"],
                 "outports": [
@@ -35,7 +35,7 @@
             {
              	"start_proc": 3,
                 "nprocs": 1,
-                "cmdline": "./pegasus-mpi-keg -D 2",
+                "cmdline": "./pegasus-mpi-keg -D 2 -s 2",
                 "func": "interm3",
                 "inports": ["in"],
                 "outports": [
@@ -45,7 +45,7 @@
             {
              	"start_proc": 4,
                 "nprocs": 1,
-                "cmdline": "./pegasus-mpi-keg -D 0",
+                "cmdline": "./pegasus-mpi-keg -G 1 -u G -o /global/cscratch1/sd/oyildiz/keg-data/keg-2207.out -D 0 -s 2",
                 "func": "con",
                 "inports": ["in"],
                 "outports": [

@@ -1,4 +1,4 @@
-SUBDIRS = pegasus-keg #pegasus-mpi-keg
+SUBDIRS = pegasus-keg pegasus-mpi-keg
 
 subdirs:
 	for dir in $(SUBDIRS); do \

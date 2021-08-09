@@ -36,8 +36,7 @@ class IOSyntheticWorkflow(object):
                  binary_path: Optional[str] = "vanilla",
                  files_size: Optional[Union[List[float], Dict[str,float]]]=[1.0],
                  size_unit: Optional[str] = 'G',
-                 waiting_time: Optional[Union[List[float], Dict[str,float]]] = [2.0],
-                 decaf: Optional[bool] = "False"
+                 waiting_time: Optional[Union[List[float], Dict[str,float]]] = [2.0]
                 ) -> None:
         self.wf_name = wf_name
         self.wid = self.wf_name + "-" + datetime.now().strftime("%s")
@@ -51,8 +50,9 @@ class IOSyntheticWorkflow(object):
         self.size_unit = size_unit.upper()
         self.files_size = files_size
         self.waiting_time = waiting_time
-
-        self.decaf = decaf
+        self.decaf = False
+        if self.shape[0] == "decaf":
+            self.decaf = True
 
         ## Security checks
         if self.size_unit not in ['B', 'K', 'M', 'G']:
@@ -264,7 +264,6 @@ class IOSyntheticWorkflow(object):
 
 
     # --- Replica Catalog -----------------    
-
     def create_replica_catalog(self, file_path) -> None:
         self.rc = ReplicaCatalog()
 
@@ -275,10 +274,7 @@ class IOSyntheticWorkflow(object):
         if file_path:
             self.rc.add_replica(file_site, "f0.txt", file_path)
 
-
-
     # --- Create Workflow -----------------------------------------------------
-
     def create_workflow(self) -> None:
         if self.shape[0] == "chain":
             self.create_workflow_chain()
@@ -286,6 +282,8 @@ class IOSyntheticWorkflow(object):
             self.create_workflow_new_chain()
         elif self.shape[0] == "fork":
             self.create_workflow_fork()
+        elif self.shape[0] == "decaf":
+            self.create_workflow_decaf()
         else:
             self.create_workflow_custom()
 
@@ -336,6 +334,40 @@ class IOSyntheticWorkflow(object):
                 keg.add_profiles(Namespace.PEGASUS, key="label", value="cluster1")
             f1 = fi
             self.wf.add_jobs(keg)
+
+    def create_workflow_decaf(self) -> None:
+        self.wf = Workflow(self.wf_name, infer_dependencies=True)
+
+        # Security check to ensure nb of jobs is positive >= 1
+        nb_jobs = max(self.shape[1], 1)
+        
+        # First job
+        f1 = File("f0.txt")
+        job1 = (
+            Job("keg")
+            .add_args("-i", f1, "-D", self.files_size[0], "-s", self.waiting_time[0])
+            .add_inputs(f1)
+            # .add_outputs(f1, stage_out=False, register_replica=True)
+        )
+        self.wf.add_jobs(job1)
+        
+        for i in range(1, nb_jobs-1):
+            fi = File("f{}.txt".format(i))
+            keg = (
+                Job("keg")
+                .add_profiles(Namespace.PEGASUS, key="label", value="cluster1")
+                .add_args("-D", self.files_size[i], "-s", self.waiting_time[i-1])
+            )
+            self.wf.add_jobs(keg)
+
+        # Last job
+        fn = File("f{}.txt".format(nb_jobs-1))
+        jobn = (
+            Job("keg")
+            .add_args("-o", fn, "-D", self.files_size[nb_jobs-1], "-s", self.waiting_time[nb_jobs-1])
+            .add_outputs(fn, stage_out=False, register_replica=True)
+        )
+        self.wf.add_jobs(jobn)
 
     def create_workflow_fork(self) -> None:
         self.wf = Workflow(self.wf_name, infer_dependencies=True)
@@ -515,23 +547,17 @@ if __name__ == "__main__":
     #     default="workflow.yml",
     #     help="Output file (default: workflow.yml)",
     # )
-    parser.add_argument(
-        "-d",
-        "--decaf",
-        action="store_true",
-        help="Enable Decaf integration",
-    )
 
     args = parser.parse_args()
 
-    if not args.workflow_class in ["chain", "new_chain", "fork", "custom"]:
-        parser.error('-c/--workflow-class can only be set to "chain", "fork" or "custom".')
+    if not args.workflow_class in ["chain", "new_chain", "fork", "custom", "decaf"]:
+        parser.error('-c/--workflow-class can only be set to "chain", "new_chain", "fork", "decaf", or "custom".')
     
     if args.workflow_class == "custom" and args.workflow_yml is None:
         parser.error(
             '-c/--workflow-class == "custom" requires -w/--workflow-yml to be set.')
 
-    if args.workflow_class in ["chain", "new_chain", "fork"] and (args.number_jobs is None or args.number_jobs < 1):
+    if args.workflow_class in ["chain", "new_chain", "fork", "decaf"] and (args.number_jobs is None or args.number_jobs < 1):
         parser.error(
             '-c/--workflow-class == "chain" or "fork" requires -n/--number-jobs to be set (and it must be >=1).')
 
@@ -541,7 +567,7 @@ if __name__ == "__main__":
 
     if args.workflow_class == "custom":
         workflow_class = (args.workflow_class, args.workflow_yml)
-    elif args.workflow_class in ["chain", "new_chain", "fork"]:
+    elif args.workflow_class in ["chain", "new_chain", "fork", "decaf"]:
         workflow_class = (args.workflow_class, args.number_jobs)
     else:
         parser.error('Unknown parsing argument error')
@@ -551,8 +577,8 @@ if __name__ == "__main__":
         exec_site_name=args.execution_site,
         binary_path=args.bin_path,
         shape=workflow_class,
-        decaf=args.decaf,
-        waiting_time=[2,2,2,2,2]
+        waiting_time=[2,2,2,2,2],
+        files_size=[1.0,1.0,1.0,1.0,1.0]
     )
 
     if not args.skip_sites_catalog:

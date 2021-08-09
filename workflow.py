@@ -246,16 +246,19 @@ class IOSyntheticWorkflow(object):
                     glite_arguments="--qos=regular --constraint=haswell --licenses=SCRATCH",
                 )
             )
+                       
+            self.tc.add_transformations(pegasus_transfer, pegasus_dirmanager, pegasus_cleanup, system_chmod)
+            
             # What is this tranformation for?
             if self.decaf:
                 decaf = (
                     Transformation("decaf", namespace="dataflow", site="cori", pfn="linear5.json", is_stageable=True)
                     .add_pegasus_profile(
                         runtime="1800",
-                        glite_arguments="--qos=regular --constraint=haswell --licenses=SCRATCH",
+                        glite_arguments="--qos=debug --constraint=haswell --licenses=SCRATCH",
                     )
                 )
-            self.tc.add_transformations(pegasus_transfer, pegasus_dirmanager, pegasus_cleanup, system_chmod)
+                self.tc.add_transformations(decaf)
 
         self.tc.add_transformations(keg)
 

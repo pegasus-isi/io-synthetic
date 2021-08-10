@@ -350,6 +350,7 @@ class IOSyntheticWorkflow(object):
         f1 = File("f0.txt")
         job1 = (
             Job("keg")
+            .add_profiles(Namespace.PEGASUS, key="label", value="cluster1")
             .add_args("-i", f1, "-D", self.files_size[0], "-s", self.waiting_time[0])
             .add_inputs(f1)
             # .add_outputs(f1, stage_out=False, register_replica=True)
@@ -361,7 +362,7 @@ class IOSyntheticWorkflow(object):
             keg = (
                 Job("keg")
                 .add_profiles(Namespace.PEGASUS, key="label", value="cluster1")
-                .add_args("-D", self.files_size[i], "-s", self.waiting_time[i-1])
+                .add_args("-D", self.files_size[i], "-s", self.waiting_time[i])
             )
             self.wf.add_jobs(keg)
 
@@ -369,6 +370,7 @@ class IOSyntheticWorkflow(object):
         fn = File("f{}.txt".format(nb_jobs-1))
         jobn = (
             Job("keg")
+            .add_profiles(Namespace.PEGASUS, key="label", value="cluster1")
             .add_args("-o", fn, "-D", self.files_size[nb_jobs-1], "-s", self.waiting_time[nb_jobs-1])
             .add_outputs(fn, stage_out=False, register_replica=True)
         )

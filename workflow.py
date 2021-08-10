@@ -103,8 +103,10 @@ class IOSyntheticWorkflow(object):
         self.props = Properties()
         if self.decaf :
             self.props["pegasus.job.aggregator"] = "Decaf"
+            self.props["pegasus.data.configuration"] = "sharedfs"
         # props["pegasus.monitord.encoding"] = "json"
         # self.properties["pegasus.integrity.checking"] = "none"
+        
         return
 
     # --- Site Catalog --------------------------------------------------------
@@ -251,12 +253,15 @@ class IOSyntheticWorkflow(object):
             
             # What is this tranformation for?
             if self.decaf:
+                env_script="/global/common/software/m2187/pegasus-keg/decaf/env.sh"
+                json_fn="linear2.json"
                 decaf = (
-                    Transformation("decaf", namespace="dataflow", site="cori", pfn="linear5.json", is_stageable=True)
+                    Transformation("decaf", namespace="dataflow", site="cori", pfn=json_fn, is_stageable=False)
                     .add_pegasus_profile(
                         runtime="1800",
                         glite_arguments="--qos=debug --constraint=haswell --licenses=SCRATCH",
                     )
+                    .add_env(key="DECAF_ENV_SOURCE", value=env_script)  
                 )
                 self.tc.add_transformations(decaf)
 

@@ -248,11 +248,37 @@ class IOSyntheticWorkflow(object):
                     glite_arguments="--qos=regular --constraint=haswell --licenses=SCRATCH",
                 )
             )
-                       
             self.tc.add_transformations(pegasus_transfer, pegasus_dirmanager, pegasus_cleanup, system_chmod)
             
             # What is this tranformation for?
             if self.decaf:
+                keg_root = (
+                    Transformation("keg_root", site="cori", pfn=exec_path, is_stageable=True)
+                    .add_pegasus_profile(
+                        cores="1",
+                        runtime="1800",
+                        glite_arguments="--qos=regular --constraint=haswell --licenses=SCRATCH",
+                    )
+                    .add_profiles(Namespace.SELECTOR, key="decaf.args", value='-D 1')
+                )
+                keg_inter = (
+                    Transformation("keg_inter", site="cori", pfn=exec_path, is_stageable=True)
+                    .add_pegasus_profile(
+                        cores="1",
+                        runtime="1800",
+                        glite_arguments="--qos=regular --constraint=haswell --licenses=SCRATCH",
+                    )
+                    .add_profiles(Namespace.SELECTOR, key="decaf.args", value='-D 2')
+                )
+                keg_leaf = (
+                    Transformation("keg_leaf", site="cori", pfn=exec_path, is_stageable=True)
+                    .add_pegasus_profile(
+                        cores="1",
+                        runtime="1800",
+                        glite_arguments="--qos=regular --constraint=haswell --licenses=SCRATCH",
+                    )
+                    .add_profiles(Namespace.SELECTOR, key="decaf.args", value='-D 0')
+                )
                 env_script="/global/common/software/m2187/pegasus-keg/decaf/env.sh"
                 json_fn="linear2.json"
                 decaf = (
@@ -263,9 +289,9 @@ class IOSyntheticWorkflow(object):
                     )
                     .add_env(key="DECAF_ENV_SOURCE", value=env_script)  
                 )
-                self.tc.add_transformations(decaf)
-
-        self.tc.add_transformations(keg)
+                self.tc.add_transformations(keg_root, keg_inter, keg_leaf,decaf)
+            else:
+                self.tc.add_transformations(keg)
 
 
     # --- Replica Catalog -----------------    
@@ -345,36 +371,28 @@ class IOSyntheticWorkflow(object):
 
         # Security check to ensure nb of jobs is positive >= 1
         nb_jobs = max(self.shape[1], 1)
-        
-        # First job
         f1 = File("f0.txt")
-        job1 = (
-            Job("keg")
-            .add_profiles(Namespace.PEGASUS, key="label", value="cluster1")
-            .add_args("-i", f1, "-D", self.files_size[0], "-s", self.waiting_time[0])
-            .add_inputs(f1)
-            # .add_outputs(f1, stage_out=False, register_replica=True)
-        )
-        self.wf.add_jobs(job1)
-        
-        for i in range(1, nb_jobs-1):
+        for i in range(1, nb_jobs+1):
             fi = File("f{}.txt".format(i))
-            keg = (
-                Job("keg")
-                .add_profiles(Namespace.PEGASUS, key="label", value="cluster1")
-                .add_args("-D", self.files_size[i], "-s", self.waiting_time[i])
+            if i == 1: 
+                keg = Job("keg_root")
+            elif i == nb_jobs:
+                keg = Job("keg_leaf")
+            else:
+                keg = Job("keg_inter")
+            (   
+                keg
+                # .add_args("-i", f1, "-o", fi, "-s", self.waiting_time[i-1], "-G", self.files_size[i-1], "-u", self.size_unit)
+                .add_args("-i", f1, "-o", fi, "-s", self.waiting_time[i-1])
+                # .add_args("-i", f1, "-o", fi)
+                .add_inputs(f1)
+                .add_outputs(fi, stage_out=False, register_replica=False)
             )
+            if self.decaf:
+                keg.add_profiles(Namespace.PEGASUS, key="label", value="cluster1")
+            f1 = fi
             self.wf.add_jobs(keg)
 
-        # Last job
-        fn = File("f{}.txt".format(nb_jobs-1))
-        jobn = (
-            Job("keg")
-            .add_profiles(Namespace.PEGASUS, key="label", value="cluster1")
-            .add_args("-o", fn, "-D", self.files_size[nb_jobs-1], "-s", self.waiting_time[nb_jobs-1])
-            .add_outputs(fn, stage_out=False, register_replica=True)
-        )
-        self.wf.add_jobs(jobn)
 
     def create_workflow_fork(self) -> None:
         self.wf = Workflow(self.wf_name, infer_dependencies=True)

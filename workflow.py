@@ -32,7 +32,7 @@ class IOSyntheticWorkflow(object):
     def __init__(self,
                  shape: Optional[Tuple[str, Union[int, str]]] = ("chain", 1),
                  exec_site_name: Optional[str] = "condorpool",
-                 binary_path: Optional[str] = "vanilla",
+                 src_path: Optional[str] = None,
                  files_size: Optional[Union[List[float], Dict[str,float]]]=[1.0],
                  size_unit: Optional[str] = 'G',
                  waiting_time: Optional[Union[List[float], Dict[str,float]]] = [2.0]
@@ -45,7 +45,11 @@ class IOSyntheticWorkflow(object):
         self.exec_site_name = exec_site_name
         
         self.shape = shape
-        self.binary_path = binary_path
+
+        self.src_path = self.wf_dir
+        if src_path:
+            self.src_path = src_path
+        
         self.size_unit = size_unit.upper()
         self.files_size = files_size
         self.waiting_time = waiting_time
@@ -188,13 +192,6 @@ class IOSyntheticWorkflow(object):
             pfn=PEGASUS_BIN_DIR + "/pegasus-keg",
             is_stageable=True
         )
-        if self.binary_path:
-            keg = Transformation(
-                "keg",
-                site="local",
-                pfn=self.binary_path,
-                is_stageable=True
-            )
         
         if self.exec_site_name == "cori":
             pegasus_transfer = (
@@ -236,8 +233,8 @@ class IOSyntheticWorkflow(object):
             wrapper_fn = os.path.join(github_location, "bin/wrapper_kickstart.sh")
 
             exec_path = "$PEGASUS_HOME/bin/pegasus-keg"
-            if self.binary_path:
-                exec_path = self.binary_path
+            if self.src_path:
+                exec_path = self.src_path + "/bin/pegasus-keg"
 
             # keg = (
             #     Transformation("keg", site="cori", pfn=wrapper_fn, is_stageable=True)
@@ -261,8 +258,9 @@ class IOSyntheticWorkflow(object):
             
             # What is this tranformation for?
             if self.decaf:
+                keg_pfn = os.path.join(self.src_path, "bin/decaf/pegasus-mpi-keg")
                 keg_root = (
-                    Transformation("keg_root", site="cori", pfn=exec_path, is_stageable=True)
+                    Transformation("keg_root", site="cori", pfn=keg_pfn, is_stageable=True)
                     .add_pegasus_profile(
                         cores="1",
                         runtime="1800",
@@ -271,7 +269,7 @@ class IOSyntheticWorkflow(object):
                     .add_profiles(Namespace.SELECTOR, key="decaf.args", value='-D 1')
                 )
                 keg_inter = (
-                    Transformation("keg_inter", site="cori", pfn=exec_path, is_stageable=True)
+                    Transformation("keg_inter", site="cori", pfn=keg_pfn, is_stageable=True)
                     .add_pegasus_profile(
                         cores="1",
                         runtime="1800",
@@ -280,7 +278,7 @@ class IOSyntheticWorkflow(object):
                     .add_profiles(Namespace.SELECTOR, key="decaf.args", value='-D 2')
                 )
                 keg_leaf = (
-                    Transformation("keg_leaf", site="cori", pfn=exec_path, is_stageable=True)
+                    Transformation("keg_leaf", site="cori", pfn=keg_pfn, is_stageable=True)
                     .add_pegasus_profile(
                         cores="1",
                         runtime="1800",
@@ -288,7 +286,7 @@ class IOSyntheticWorkflow(object):
                     )
                     .add_profiles(Namespace.SELECTOR, key="decaf.args", value='-D 0')
                 )
-                env_script="/global/common/software/m2187/pegasus-keg/decaf/env.sh"
+                env_script = self.src_path + "/bin/decaf/env.sh"
                 json_fn="linear2.json"
                 nb_jobs = max(self.shape[1], 1)
                 n_nodes=nb_jobs+1
@@ -305,7 +303,7 @@ class IOSyntheticWorkflow(object):
                 self.tc.add_transformations(keg)
 
             if self.pmc:
-                pmc_wrapper_pfn = "/global/cfs/cdirs/m2187/pegasus-decaf/1000genome-workflow/bin/pmc-wrapper"
+                pmc_wrapper_pfn = os.path.join(self.src_path, "bin/pmc/pmc-wrapper")
                 nb_jobs = max(self.shape[1], 1)
                 pmc = (
                     Transformation("mpiexec", namespace="pegasus", site="cori", pfn=pmc_wrapper_pfn, is_stageable=False)
@@ -314,7 +312,6 @@ class IOSyntheticWorkflow(object):
                         glite_arguments="--qos=debug --constraint=haswell --licenses=SCRATCH --nodes=1 --ntasks-per-node=1 --ntasks=1",
                     )
                     .add_env(key="PEGASUS_PMC_TASKS", value=nb_jobs)
-                    # .add_profiles(Namespace.PEGASUS, key="job.aggregator", value="mpiexec")
                     # .add_profiles(Namespace.PEGASUS, key="nodes", value=1)
                     # .add_profiles(Namespace.PEGASUS, key="ppn", value=32)
                 )
@@ -570,28 +567,12 @@ if __name__ == "__main__":
         help="Number of jobs generated, only valid if chain or fork have been chosen (default: 1)",
     )
     parser.add_argument(
-        "-p",
+        "-f",
         "--file-path",
         metavar="STR",
         type=str,
         default=None,
         help="Absolute path of input file for the first job",
-    )
-    parser.add_argument(
-        "-b",
-        "--bin-path",
-        metavar="STR",
-        type=str,
-        default=None,
-        help="Absolute path of the binary you want to use. If this option is not specified, pegasus-keg furnished by Pegasus will be used.",
-    )
-    parser.add_argument(
-        "-f",
-        "--workflow-name",
-        metavar="STR",
-        type=str,
-        default="io-synthetic",
-        help="Name of the workflow.",
     )
     parser.add_argument(
         "-d",
@@ -600,6 +581,14 @@ if __name__ == "__main__":
         type=str,
         default=None,
         help="Name of the submit directory",
+    )
+    parser.add_argument(
+        "-p",
+        "--src-path",
+        metavar="STR",
+        type=str,
+        default=None,
+        help="Absolute path of source directory you want to use. If this option is not specified, local current directory will be used",
     )
     # parser.add_argument(
     #     "-o",
@@ -636,7 +625,7 @@ if __name__ == "__main__":
 
     workflow = IOSyntheticWorkflow(
         exec_site_name=args.execution_site,
-        binary_path=args.bin_path,
+        src_path = args.src_path,
         shape=workflow_class,
         waiting_time=[0,0,0,0,0],
         files_size=[1.0,1.0,1.0,1.0,1.0]

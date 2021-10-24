@@ -10,6 +10,6 @@ module load cmake
 module load boost/1.69.0
 
 # Decaf
-export DECAF_PREFIX="${HOME}/software/install/decaf"
-export LD_LIBRARY_PATH="${DECAF_PREFIX}/lib:${LD_LIBRARY_PATH}"
+export DECAF_PREFIX="/global/cfs/cdirs/m2187/pegasus-decaf/io-synthetic/bin/decaf"
+export LD_LIBRARY_PATH="${DECAF_PREFIX}/lib/:$LD_LIBRARY_PATH"
 

@@ -30,7 +30,6 @@ class IOSyntheticWorkflow(object):
 
     # --- Init ----------------------------------------------------------------
     def __init__(self,
-                 wf_name: Optional[str] = 'io-synthetic',
                  shape: Optional[Tuple[str, Union[int, str]]] = ("chain", 1),
                  exec_site_name: Optional[str] = "condorpool",
                  binary_path: Optional[str] = "vanilla",
@@ -38,13 +37,13 @@ class IOSyntheticWorkflow(object):
                  size_unit: Optional[str] = 'G',
                  waiting_time: Optional[Union[List[float], Dict[str,float]]] = [2.0]
                 ) -> None:
-        self.wf_name = wf_name
+        self.wf_name = "io-synthetic"
         self.wid = self.wf_name + "-" + datetime.now().strftime("%s")
         self.dagfile = self.wid+".yml"
 
         self.wf_dir = str(Path(__file__).parent.resolve())
         self.exec_site_name = exec_site_name
-
+        
         self.shape = shape
         self.binary_path = binary_path
         self.size_unit = size_unit.upper()
@@ -53,6 +52,9 @@ class IOSyntheticWorkflow(object):
         self.decaf = False
         if self.shape[0] == "decaf":
             self.decaf = True
+        self.pmc = False
+        if self.shape[0] == "pmc":
+            self.pmc = True
 
         ## Security checks
         if self.size_unit not in ['B', 'K', 'M', 'G']:
@@ -104,6 +106,11 @@ class IOSyntheticWorkflow(object):
         if self.decaf :
             self.props["pegasus.job.aggregator"] = "Decaf"
             self.props["pegasus.data.configuration"] = "sharedfs"
+
+        if self.pmc:
+            self.props["pegasus.job.aggregator"] = "mpiexec"
+            self.props["pegasus.data.configuration"] = "sharedfs"
+
         # props["pegasus.monitord.encoding"] = "json"
         # self.properties["pegasus.integrity.checking"] = "none"
         
@@ -140,9 +147,10 @@ class IOSyntheticWorkflow(object):
                 )
                 .add_directories(
                     Directory(Directory.SHARED_SCRATCH, "/global/cscratch1/sd/${NERSC_USER}/pegasus/scratch")
-                        .add_file_servers(FileServer("file:///global/cscratch1/sd/${NERSC_USER}/pegasus/scratch", Operation.ALL)),
+                        .add_file_servers(FileServer("file:///global/cscratch1/sd/${NERSC_USER}/pegasus/scratch", Operation.PUT))
+                        .add_file_servers(FileServer("scp://${NERSC_USER}@cori.nersc.gov/global/cscratch1/sd/${NERSC_USER}/pegasus/scratch", Operation.GET)),
                     Directory(Directory.SHARED_STORAGE, "/global/cscratch1/sd/${NERSC_USER}/pegasus/storage")
-                        .add_file_servers(FileServer("file:///global/cscratch1/sd/${NERSC_USER}/pegasus/storage", Operation.ALL))
+                        .add_file_servers(FileServer("scp:///global/cscratch1/sd/${NERSC_USER}/pegasus/storage", Operation.ALL))
                 )
                 .add_pegasus_profile(
                     style="ssh",
@@ -152,6 +160,7 @@ class IOSyntheticWorkflow(object):
                     runtime="300"
                     # grid_start = "NoGridStart"
                 )
+                .add_profiles(Namespace.PEGASUS, key="SSH_PRIVATE_KEY", value="${HOME}/.ssh/bosco_key.rsa")
                 .add_env(key="PEGASUS_HOME", value="${NERSC_PEGASUS_HOME}")
             )
             self.sc.add_sites(cori)
@@ -245,7 +254,7 @@ class IOSyntheticWorkflow(object):
                 .add_pegasus_profile(
                     cores="1",
                     runtime="1800",
-                    glite_arguments="--qos=regular --constraint=haswell --licenses=SCRATCH",
+                    glite_arguments="--qos=debug --constraint=haswell --licenses=SCRATCH",
                 )
             )
             self.tc.add_transformations(pegasus_transfer, pegasus_dirmanager, pegasus_cleanup, system_chmod)
@@ -281,17 +290,35 @@ class IOSyntheticWorkflow(object):
                 )
                 env_script="/global/common/software/m2187/pegasus-keg/decaf/env.sh"
                 json_fn="linear2.json"
+                nb_jobs = max(self.shape[1], 1)
+                n_nodes=nb_jobs+1
                 decaf = (
                     Transformation("decaf", namespace="dataflow", site="cori", pfn=json_fn, is_stageable=False)
                     .add_pegasus_profile(
                         runtime="1800",
-                        glite_arguments="--qos=debug --constraint=haswell --licenses=SCRATCH",
+                        glite_arguments="--qos=regular --constraint=haswell --licenses=SCRATCH --nodes=" + str(n_nodes) + " --ntasks-per-node=1 --ntasks=" + str(n_nodes),
                     )
                     .add_env(key="DECAF_ENV_SOURCE", value=env_script)  
                 )
                 self.tc.add_transformations(keg_root, keg_inter, keg_leaf,decaf)
             else:
                 self.tc.add_transformations(keg)
+
+            if self.pmc:
+                pmc_wrapper_pfn = "/global/cfs/cdirs/m2187/pegasus-decaf/1000genome-workflow/bin/pmc-wrapper"
+                nb_jobs = max(self.shape[1], 1)
+                pmc = (
+                    Transformation("mpiexec", namespace="pegasus", site="cori", pfn=pmc_wrapper_pfn, is_stageable=False)
+                    .add_pegasus_profile(
+                        runtime="1800",
+                        glite_arguments="--qos=debug --constraint=haswell --licenses=SCRATCH --nodes=1 --ntasks-per-node=1 --ntasks=1",
+                    )
+                    .add_env(key="PEGASUS_PMC_TASKS", value=nb_jobs)
+                    # .add_profiles(Namespace.PEGASUS, key="job.aggregator", value="mpiexec")
+                    # .add_profiles(Namespace.PEGASUS, key="nodes", value=1)
+                    # .add_profiles(Namespace.PEGASUS, key="ppn", value=32)
+                )
+                self.tc.add_transformations(pmc)
 
 
     # --- Replica Catalog -----------------    
@@ -315,6 +342,8 @@ class IOSyntheticWorkflow(object):
             self.create_workflow_fork()
         elif self.shape[0] == "decaf":
             self.create_workflow_decaf()
+        elif self.shape[0] == "pmc":
+            self.create_workflow_new_chain()
         else:
             self.create_workflow_custom()
 
@@ -361,7 +390,7 @@ class IOSyntheticWorkflow(object):
                 .add_inputs(f1)
                 .add_outputs(fi, stage_out=False, register_replica=False)
             )
-            if self.decaf:
+            if self.decaf or self.pmc:
                 keg.add_profiles(Namespace.PEGASUS, key="label", value="cluster1")
             f1 = fi
             self.wf.add_jobs(keg)
@@ -471,16 +500,16 @@ class IOSyntheticWorkflow(object):
 
 
     # --- Run Workflow -----------------------------------------------------
-    def run(self, submit=False, wait=False):
+    def run(self, dir_name, submit=False, wait=False):
         try:
             plan_site = [self.exec_site_name]
             cluster_type = None
-            if self.decaf: 
+            if self.decaf or self.pmc: 
                 cluster_type = ["label"]
             (
                 self.wf.plan(
                 dir=self.wf_dir,
-                # relative_dir=self.wf_name,
+                relative_dir=dir_name,
                 sites=plan_site,
                 output_sites=["local"],
                 output_dir=self.local_storage_dir,
@@ -503,9 +532,9 @@ if __name__ == "__main__":
 
     parser.add_argument(
         "-s",
-        "--skip-sites-catalog",
+        "--submit",
         action="store_true",
-        help="Skip site catalog creation",
+        help="Submit the workflow",
     )
     parser.add_argument(
         "-e",
@@ -564,6 +593,14 @@ if __name__ == "__main__":
         default="io-synthetic",
         help="Name of the workflow.",
     )
+    parser.add_argument(
+        "-d",
+        "--dir-name",
+        metavar="STR",
+        type=str,
+        default=None,
+        help="Name of the submit directory",
+    )
     # parser.add_argument(
     #     "-o",
     #     "--output",
@@ -575,14 +612,14 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    if not args.workflow_class in ["chain", "new_chain", "fork", "custom", "decaf"]:
+    if not args.workflow_class in ["chain", "new_chain", "fork", "custom", "decaf", "pmc"]:
         parser.error('-c/--workflow-class can only be set to "chain", "new_chain", "fork", "decaf", or "custom".')
     
     if args.workflow_class == "custom" and args.workflow_yml is None:
         parser.error(
             '-c/--workflow-class == "custom" requires -w/--workflow-yml to be set.')
 
-    if args.workflow_class in ["chain", "new_chain", "fork", "decaf"] and (args.number_jobs is None or args.number_jobs < 1):
+    if args.workflow_class in ["chain", "new_chain", "fork", "decaf", "pmc"] and (args.number_jobs is None or args.number_jobs < 1):
         parser.error(
             '-c/--workflow-class == "chain" or "fork" requires -n/--number-jobs to be set (and it must be >=1).')
 
@@ -592,23 +629,21 @@ if __name__ == "__main__":
 
     if args.workflow_class == "custom":
         workflow_class = (args.workflow_class, args.workflow_yml)
-    elif args.workflow_class in ["chain", "new_chain", "fork", "decaf"]:
+    elif args.workflow_class in ["chain", "new_chain", "fork", "decaf", "pmc"]:
         workflow_class = (args.workflow_class, args.number_jobs)
     else:
         parser.error('Unknown parsing argument error')
 
     workflow = IOSyntheticWorkflow(
-        wf_name=args.workflow_name,
         exec_site_name=args.execution_site,
         binary_path=args.bin_path,
         shape=workflow_class,
-        waiting_time=[2,2,2,2,2],
+        waiting_time=[0,0,0,0,0],
         files_size=[1.0,1.0,1.0,1.0,1.0]
     )
 
-    if not args.skip_sites_catalog:
-        print("Creating execution sites...")
-        workflow.create_sites_catalog()
+    print("Creating execution sites...")
+    workflow.create_sites_catalog()
 
     print("Creating workflow properties...")
     workflow.create_pegasus_properties()
@@ -623,4 +658,8 @@ if __name__ == "__main__":
     workflow.create_workflow()
 
     workflow.write()
-    workflow.run(submit=False, wait=False)
+
+    if not args.dir_name:
+        args.dir_name = workflow.wid
+
+    workflow.run(args.dir_name, submit=args.submit, wait=False)

@@ -114,6 +114,7 @@ class IOSyntheticWorkflow(object):
         if self.pmc:
             self.props["pegasus.job.aggregator"] = "mpiexec"
             self.props["pegasus.data.configuration"] = "sharedfs"
+            self.props["pegasus.integrity.checking"] = "none"
 
         # props["pegasus.monitord.encoding"] = "json"
         # self.properties["pegasus.integrity.checking"] = "none"
@@ -192,7 +193,13 @@ class IOSyntheticWorkflow(object):
             pfn=PEGASUS_BIN_DIR + "/pegasus-keg",
             is_stageable=True
         )
-        
+        # pmc = (
+        #     Transformation("mpiexec", namespace="pegasus", site="local", pfn=PEGASUS_BIN_DIR + "/pegasus-mpi-cluster", is_stageable=False)
+        #     .add_profiles(Namespace.PEGASUS, key="nodes", value=1)
+        #     .add_profiles(Namespace.PEGASUS, key="ppn", value=3)
+        # )
+        # self.tc.add_transformations(pmc)
+                
         if self.exec_site_name == "cori":
             pegasus_transfer = (
                 Transformation("transfer", namespace="pegasus", site="cori", pfn="$PEGASUS_HOME/bin/pegasus-transfer", is_stageable=False)\
@@ -299,8 +306,8 @@ class IOSyntheticWorkflow(object):
                     .add_env(key="DECAF_ENV_SOURCE", value=env_script)  
                 )
                 self.tc.add_transformations(keg_root, keg_inter, keg_leaf,decaf)
-            else:
-                self.tc.add_transformations(keg)
+            # else:
+            #     self.tc.add_transformations(keg)
 
             if self.pmc:
                 pmc_wrapper_pfn = os.path.join(self.src_path, "bin/pmc/pmc-wrapper")
@@ -311,12 +318,15 @@ class IOSyntheticWorkflow(object):
                         runtime="1800",
                         glite_arguments="--qos=debug --constraint=haswell --licenses=SCRATCH --nodes=1 --ntasks-per-node=1 --ntasks=1",
                     )
-                    .add_env(key="PEGASUS_PMC_TASKS", value=nb_jobs)
+                    .add_env(key="PEGASUS_PMC_TASKS", value=2)
                     # .add_profiles(Namespace.PEGASUS, key="nodes", value=1)
                     # .add_profiles(Namespace.PEGASUS, key="ppn", value=32)
                 )
                 self.tc.add_transformations(pmc)
-
+        
+        if not self.decaf:
+            self.tc.add_transformations(keg)
+        
 
     # --- Replica Catalog -----------------    
     def create_replica_catalog(self, file_path) -> None:
@@ -628,7 +638,7 @@ if __name__ == "__main__":
         src_path = args.src_path,
         shape=workflow_class,
         waiting_time=[0,0,0,0,0],
-        files_size=[1.0,1.0,1.0,1.0,1.0]
+        # files_size=[1.0,1.0,1.0,1.0,1.0]
     )
 
     print("Creating execution sites...")
